@@ -1,0 +1,357 @@
+---
+title: "STATSII_project"
+author: "Anup Bhutada, Ayush Pandey, Shouvik Sengupta, Uday Gadge"
+date: "2023-05-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Predicting Green house emissions from Sensor data
+
+Following is a data set collected from experiment set up to measure green house emissions from a turbine engine. There are different sensors set up to measure certain dependent features like temperature, pressure etc. The goal is to see to what extent these measurements can be useful to predict the emission of green house gases. There are two features here that measure these emissions `NOx` and `CO`.
+
+**Reading the data**
+
+The data is formatted year wise, so it needs to be merged.
+
+```{r}
+library(tidyr)
+library(tidyverse)
+library(ggplot2)
+
+path <- 'C:/Users/gadge/OneDrive/Desktop/STATS-II/Project/'
+df1 <- read_csv(paste(path, 'gt_2011.csv', sep = '')) %>% mutate(year = 2011)
+df2 <- read_csv(paste(path, 'gt_2012.csv', sep = '')) %>% mutate(year = 2012)
+df3 <- read_csv(paste(path, 'gt_2013.csv', sep = '')) %>% mutate(year = 2013)
+df4 <- read_csv(paste(path, 'gt_2014.csv', sep = '')) %>% mutate(year = 2014)
+df5 <- read_csv(paste(path, 'gt_2015.csv', sep = '')) %>% mutate(year = 2014)
+
+df <- rbind(df1, df2, df3, df4, df5)
+head(df)
+
+```
+```{r}
+(colnames(df))
+(dim(df))
+```
+** Data Exploration and Visualization **
+
+The data has only numerical features.
+
+```{r}
+library(reshape2)
+p <- ggplot(melt(df), aes(factor(variable), value)) 
+p + geom_boxplot(fill = "#CFB87C") + facet_wrap(~variable, scale="free")+xlab("")+ylab("")+
+  theme_minimal()
+```
+
+```{r}
+
+library(reshape2)
+p <- ggplot(melt(df1), aes(x=value)) 
+p + geom_histogram(bins = 50, fill = "#CFB87C",col = "black") + facet_wrap(~variable, scale="free") + xlab("")+ylab("")+
+  theme_minimal()
+
+```
+Exploring correlations between features
+
+```{r}
+#pairs(df[,-12],col = "slategrey", main = "Pair plots")
+```
+```{r}
+library(corrplot)
+col4 = colorRampPalette(c("black", "darkgrey", "grey","#CFB87C"))
+corrplot(cor(df[,-12]), method = "ellipse", col = col4(100),  addCoef.col = "black", tl.col = "black")
+```
+There are some features with high correlation, looking at them closely.
+
+```{r}
+#pairs(df[c('AFDP', 'GTEP', 'TIT', 'TEY', 'CDP', 'NOX')], col = "darkgrey",main = "Pair plots")
+```
+```{r}
+library(corrplot)
+col4 = colorRampPalette(c("black", "darkgrey", "grey","#CFB87C"))
+corrplot(cor(df[c('AFDP', 'GTEP', 'TIT', 'TEY', 'CDP' , 'NOX')]),
+         method = "ellipse", col = col4(100),  addCoef.col = "black", tl.col = "black")
+```
+```{r}
+lmod <- lm(NOX ~ . - CO - year - CDP, data = df)
+summary(lmod)
+```
+```{r}
+par(mfrow = c(2,2))
+plot(lmod,col = "darkgrey")
+```
+```{r}
+ggplot(mapping = aes(fitted(lmod),df$NOX)) + geom_point(col = "darkgrey")+
+  geom_abline(slope = 1, intercept = 0, col = 'black',linetype = 'dashed')+
+  geom_smooth(se = FALSE, col = "#CFB87C")+theme_bw()+xlab("Fitted") + ylab("Actual")
+```
+From the above plots, some key violations of linear regression are:
+
+- Normality 
+
+The histogram of `NOX` it didn't look normal. 
+
+```{r}
+par(mfrow = c(1,2))
+hist(df$NOX,col = "#CFB87C",main = "No Transformation",xlab = "",ylab = "")
+hist(log(df$NOX),col = "#CFB87C",main = "Log Transformation",xlab = "",ylab = "")
+
+```
+
+** Transformation **
+
+The log transformation helped with normality to an extent.
+```{r}
+lm_transform = lm(log(NOX) ~ . - year - CO - CDP, data = df)
+summary(lm_transform)
+```
+GTEP is insignificant
+```{r}
+lm_transform = lm(log(NOX) ~ . - year - CO - CDP - GTEP, data = df)
+summary(lm_transform)
+```
+
+```{r}
+par(mfrow = c(2,2))
+plot(lm_transform, col = "darkgrey")
+```
+```{r}
+ggplot(mapping = aes(fitted(lm_transform),log(df$NOX))) + geom_point(col = "darkgrey")+
+  geom_abline(slope = 1, intercept = 0, col = 'black',linetype = 'dashed')+
+  geom_smooth(se = FALSE, col = "#CFB87C")+theme_bw()+xlab("Fitted") + ylab("Actual")
+```
+Normality is a bit of an issue but not too much
+
+The only measure that can be used to compare the pre transformed model and post transformed model is $R^2$ and $R_a^2$. `AIC` and `BIC` use `RSS` which changes as the response is scaled differently. The $R^2$ improved quite significantly with the transformation.
+
+
+
+** Multicolinearity check **
+```{r}
+library(car)
+vif(lm_transform)
+```
+There are some features with high VIF.
+
+```{r}
+kappa(lm_transform)
+```
+The value of kappa is also too high. The model has some variance in it.
+
+
+## Model selection
+
+We can try to remove the predictor with highest VIF value, but this caused other predictors to become insignificant. Therefore we are using a systematic approach to remove multicollinearity.
+
+```{r}
+library(leaps)
+library(MASS)
+
+n = dim(df)[1]; 
+reg1 = regsubsets(log(NOX) ~ . - year - CO - CDP - GTEP, data = df)
+rs = summary(reg1)
+rs$which
+```
+
+
+```{r}
+AIC <- 2*(2:8) + n*log(rs$rss/n)
+plot(AIC ~ I(1:7), xlab = "number of predictors", ylab = 'AIC')
+```
+
+```{r}
+plot(1:7, rs$adjr2, xlab = "number of predictors", ylab = "adj R squared")
+```
+```{r}
+BIC = log(n)*(2:8) + n*log(rs$rss/n) 
+plot(BIC ~ I(1:7), xlab = "number of predictors", ylab = "BIC")
+```
+```{r}
+lm_6 <- lm(log(NOX) ~ . - year - CO - CDP - AFDP - GTEP, data = df)
+summary(lm_6)
+```
+```{r}
+vif(lm_6)
+```
+```{r}
+kappa(lm_6)
+```
+Removal of further features would decrease the metrics, so regularization to see if we can get a model with lower variance.
+
+** Regularization**
+
+```{r}
+df_norm <- df %>% mutate(NOX_log = log(NOX))
+df_norm <- df_norm %>% dplyr::select(-c(NOX))
+
+df_norm <-  as.data.frame(scale(df_norm))
+
+lm_norm <- lm(NOX_log ~ . - year - CO - CDP - GTEP, data = df_norm)
+summary(lm_norm)
+```
+```{r}
+lm_ridge <- lm.ridge(NOX_log ~ . - year - CO - CDP - GTEP - 1, data = df_norm, lambda = seq(0, 10, 0.01))
+lm_ridge_df <- as.data.frame(t(lm_ridge$coef))
+lm_ridge_df$lambda <- lm_ridge$lambda
+lm_ridge_df <- lm_ridge_df%>% gather(key = "variable", value = "value", -lambda)
+lm_ridge_df %>% ggplot(aes(lambda, value)) + geom_point() + geom_smooth(se = FALSE, col = "#CFB87C")+
+  xlab('lambda') + ylab('Coefficient') + facet_wrap(~variable) + theme_minimal()
+
+```
+No smoothing is happening
+```{r}
+(mod <- select(lm_ridge))
+```
+This suggests a lambda of 0.03 which isn't much so regularization will not work at all.
+
+The regularization isn't affecting anything. We can test MSPE of this with the original model to see if it's better.
+
+** Correlated Errors**
+```{r}
+library(gridExtra)
+ind <- order(df$NOX)
+p1 <- ggplot(mapping = aes(x = 1:length(df$NOX), y = residuals(lm_6)[ind])) +
+  geom_point(alpha = 0.5, col = 'darkgrey') +
+  geom_abline(slope = 0, intercept = 0) +
+  xlab("Index") +
+  geom_smooth(se = F, col = "#CFB87C") +
+  ylab("Residuals") +
+  theme_bw()+ggtitle("Erros against ordered CO")
+
+ordered.reiduals <- residuals(lm_6)[ind]
+p2 <- ggplot(mapping = aes(x = ordered.reiduals[-length(ordered.reiduals)],
+                           y = ordered.reiduals[-1]))+
+               geom_point(alpha = 0.5, col = 'darkgrey') +
+               geom_abline(slope = 0, intercept = 0) +
+               xlab("E[i]") +
+               geom_smooth(se = F, col = "#CFB87C") +
+  ylab("E[i-1]") +
+  theme_bw()+ggtitle("Consecutive Errors")
+
+grid.arrange(p1,p2, nrow = 1)
+```
+
+```{r}
+(cor.error <- cor(ordered.reiduals[-1],ordered.reiduals[-length(ordered.reiduals)]))
+```
+
+There is some correlation in error terms. Trying Generalized Least Squares
+
+** GLS **
+
+
+```{r}
+library(nlme)
+gls.6 <- gls(log(NOX) ~ . - year - CO - CDP - GTEP - AFDP, data = df,method = 'REML')
+summary(gls.6)
+
+```
+
+
+```{r}
+plot(gls.6, col = "darkgrey")
+```
+```{r}
+ggplot(mapping = aes(x = fitted(gls.6), y = log(df_ordered$NOX))) + geom_point(col = "darkgrey")+
+  geom_abline(slope = 1, intercept = 0, col = 'black',linetype = 'dashed')+
+  geom_smooth(se = FALSE, col = "#CFB87C")+theme_bw()+xlab("Fitted") + ylab("Actual")
+```
+
+```{r}
+
+ind <- order(df$NOX)
+p1 <- ggplot(mapping = aes(x = 1:length(df$NOX), y = residuals(gls.6)[ind])) +
+  geom_point(alpha = 0.5, col = 'darkgrey') +
+  geom_abline(slope = 0, intercept = 0) +
+  xlab("Index") +
+  geom_smooth(se = F, col = "#CFB87C") +
+  ylab("Residuals") +
+  theme_bw()+ggtitle("Erros against ordered CO")
+
+ordered.reiduals <- residuals(gls.6)[ind]
+p2 <- ggplot(mapping = aes(x = ordered.reiduals[-length(ordered.reiduals)],
+                           y = ordered.reiduals[-1]))+
+               geom_point(alpha = 0.5, col = 'darkgrey') +
+               geom_abline(slope = 0, intercept = 0) +
+               xlab("E[i]") +
+               geom_smooth(se = F, col = "#CFB87C") +
+  ylab("E[i-1]") +
+  theme_bw()+ggtitle("Consecutive Errors")
+
+grid.arrange(p1,p2, nrow = 1)
+
+```
+
+```{r}
+(cor.error <- cor(ordered.reiduals[-1],ordered.reiduals[-length(ordered.reiduals)]))
+```
+** Checking MSPEs and MAE **
+
+For all the models try to get MSPE and MAE by splitting it into train and test split
+
+```{r}
+set.seed(12)
+n = floor(0.8 * nrow(df1))
+index = sample(seq_len(nrow(df1)), size = n)
+
+train = df1[index, ]
+test = df1[-index, ]
+head(train)
+summary(train)
+dim(train)
+```
+Model with the 6 predictors
+
+```{r}
+
+lm_mspe_6 <- lm(log(NOX) ~ AT + AP + AH + TIT + TAT + TEY, data = train)
+summary(lm_mspe_6)
+
+```
+```{r}
+log_NOX <- predict(lm_mspe_6, newdata = test[, c('AT','AP','AH', 'TIT', 'TAT', 'TEY')])
+pred_NOX <- exp(log_NOX)
+length(pred_NOX)
+```
+
+```{r}
+mspe <- mean((pred_NOX - test$NOX)^2)
+mspe
+mae <- mean(abs(pred_NOX - test$NOX))
+mae
+```
+
+** GLS **
+
+```{r}
+library(nlme)
+ind <- order(train$NOX)
+train_ordered <- train[ind,]
+train_ordered$index <- 1:length(ind)
+gls.6 <- gls(log(NOX) ~ AT + AH + AP + TIT + TAT + TEY - index, data = train_ordered, 
+             correlation = corAR1(form = ~ 1 | index))
+summary(gls.6)
+
+```
+
+
+```{r}
+y.pred <- as.matrix(cbind(1,test %>% dplyr::select(c("AT","AH","AP","TIT","TAT","TEY")))) %*% gls.6$coefficients
+y.pred <- exp(y.pred)
+```
+
+```{r}
+mspe <- mean((test$NOX - y.pred)^2)
+mspe
+
+mae <- mean(abs(test$NOX - y.pred))
+mae
+
+```
+
+
